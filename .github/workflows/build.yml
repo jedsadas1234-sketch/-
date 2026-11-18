@@ -1,3 +1,4 @@
+Build · YML
 name: build-apk
  
 on:
@@ -18,12 +19,12 @@ jobs:
  
       - name: Find and unzip project
         run: |
-          shopt -s nullglob
           ZIP=""; BEST=-1
-          for f in *.zip; do
+          while IFS= read -r f; do
             t=$(git log -1 --format=%ct -- "$f" || echo 0)
             if [ "${t:-0}" -ge "$BEST" ]; then BEST=${t:-0}; ZIP="$f"; fi
-          done
+          done < <(find . -name '*.zip' -not -path './work/*' -not -path './.git/*')
+          echo "Files in repo:"; git ls-files | head -50
  
           if [ -n "$ZIP" ]; then
             echo "Using zip: $ZIP"
@@ -34,7 +35,7 @@ jobs:
             echo "No zip found, using repo root"
             SETTINGS=./settings.gradle.kts
           else
-            echo "ERROR: no .zip and no settings.gradle in repo root"; exit 1
+            echo "ERROR: no .zip anywhere in repo and no settings.gradle in root"; exit 1
           fi
  
           [ -n "$SETTINGS" ] || { echo "ERROR: settings.gradle not found in zip"; exit 1; }
@@ -76,4 +77,3 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
           files: out/*.apk
- 
