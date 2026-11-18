@@ -1,13 +1,12 @@
-Build · YML
 name: build-apk
- 
+
 on:
   push:
   workflow_dispatch:
- 
+
 permissions:
   contents: write   # ใช้สร้าง Release แนบ APK
- 
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -16,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
- 
+
       - name: Find and unzip project
         run: |
           ZIP=""; BEST=-1
@@ -25,7 +24,7 @@ jobs:
             if [ "${t:-0}" -ge "$BEST" ]; then BEST=${t:-0}; ZIP="$f"; fi
           done < <(find . -name '*.zip' -not -path './work/*' -not -path './.git/*')
           echo "Files in repo:"; git ls-files | head -50
- 
+
           if [ -n "$ZIP" ]; then
             echo "Using zip: $ZIP"
             rm -rf work && mkdir work
@@ -37,39 +36,39 @@ jobs:
           else
             echo "ERROR: no .zip anywhere in repo and no settings.gradle in root"; exit 1
           fi
- 
+
           [ -n "$SETTINGS" ] || { echo "ERROR: settings.gradle not found in zip"; exit 1; }
           PROJ=$(dirname "$SETTINGS")
           echo "Project dir: $PROJ"
           echo "PROJ=$PROJ" >> "$GITHUB_ENV"
- 
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
- 
+
       - name: Accept Android licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
- 
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.10.2
- 
+
       - name: Build debug APK
         working-directory: ${{ env.PROJ }}
         run: gradle :app:assembleDebug --no-daemon
- 
+
       - name: Collect APK
         run: |
           mkdir -p out
           cp "$PROJ"/app/build/outputs/apk/debug/*.apk out/
           ls -la out
- 
+
       - uses: actions/upload-artifact@v4
         with:
           name: livingworld-poc-debug
           path: out/*.apk
- 
+
       # แนบ APK ไว้ใน Releases โหลดตรงจากมือถือได้เลย ไม่ต้องแกะ zip artifact
       - name: Publish to Releases
         uses: softprops/action-gh-release@v2
