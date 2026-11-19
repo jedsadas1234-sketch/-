@@ -86,7 +86,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: livingworld-poc-debug
+          name: Pocket Al
           path: out/*.apk
 
       # แนบ APK ไว้ใน Releases โหลดตรงจากมือถือได้เลย ไม่ต้องแกะ zip artifact
