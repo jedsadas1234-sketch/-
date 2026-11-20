@@ -12,50 +12,49 @@ permissions:
 
 jobs:
   build:
-    name: Build Pocket AI
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract Project ZIP
+      - name: Extract Pocket AI
         run: |
           mkdir -p project
           unzip -o pocket-ai-android-project.zip -d project
           ls -la project
 
-      - name: Verify Project
-        working-directory: project
+      - name: Verify Files
         run: |
-          test -f settings.gradle.kts
-          test -f build.gradle.kts
-          test -f app/build.gradle.kts
-          test -f app/src/main/cpp/CMakeLists.txt
+          test -f project/settings.gradle.kts
+          test -f project/build.gradle.kts
+          test -f project/app/build.gradle.kts
+          test -f project/app/src/main/cpp/CMakeLists.txt
+          test -f project/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Setup JDK 17
+      - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle 8.7
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android Tools
+      - name: Configure Android SDK
         run: |
-          sdkmanager --install "platform-tools"
-          sdkmanager --install "platforms;android-34"
-          sdkmanager --install "build-tools;34.0.0"
-          sdkmanager --install "cmake;3.22.1"
-          sdkmanager --install "ndk;27.2.12479018"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.2.12479018"
 
-      - name: Run Unit Tests
+      - name: Run Tests
         working-directory: project
         run: gradle testDebugUnitTest --stacktrace
 
@@ -72,10 +71,11 @@ jobs:
         with:
           name: Pocket-AI-Debug
           path: project/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: Pocket-AI-Release
           path: project/app/build/outputs/apk/release/*.apk
-          
+          if-no-files-found: error
