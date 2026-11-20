@@ -2,35 +2,47 @@
 name: Pocket AI Android Build
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, master]
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Build Pocket AI
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Check Project Structure
+      - name: Extract Project ZIP
         run: |
-          pwd
-          ls -la
+          mkdir -p project
+          unzip -o pocket-ai-android-project.zip -d project
+          ls -la project
+
+      - name: Verify Project
+        working-directory: project
+        run: |
           test -f settings.gradle.kts
-          test -f gradlew
+          test -f build.gradle.kts
           test -f app/build.gradle.kts
+          test -f app/src/main/cpp/CMakeLists.txt
 
       - name: Setup JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Setup Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -43,26 +55,27 @@ jobs:
           sdkmanager --install "cmake;3.22.1"
           sdkmanager --install "ndk;27.2.12479018"
 
-      - name: Grant Gradle Permission
-        run: chmod +x gradlew
-
       - name: Run Unit Tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        working-directory: project
+        run: gradle testDebugUnitTest --stacktrace
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        working-directory: project
+        run: gradle assembleDebug --stacktrace
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease --stacktrace
+        working-directory: project
+        run: gradle assembleRelease --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: Pocket-AI-Debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: project/app/build/outputs/apk/debug/*.apk
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: Pocket-AI-Release
-          path: app/build/outputs/apk/release/*.apk
+          path: project/app/build/outputs/apk/release/*.apk
+          
