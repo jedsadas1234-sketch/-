@@ -1,4 +1,4 @@
-name: Auto-Unzip & Build Pocket AI APK
+name: Build Pocket AI APK
 
 on:
   push:
@@ -8,19 +8,32 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Extract PocketAI-Android-Source.zip if present
+      - name: Unzip project archive
         run: |
+          set -e
+          mkdir -p work/PocketAI
           if [ -f "PocketAI-Android-Source.zip" ]; then
-            unzip -o PocketAI-Android-Source.zip
-            cp -rf PocketAI/. .
-            rm -rf PocketAI
+            unzip -o PocketAI-Android-Source.zip -d work/
+          elif [ -f "pocket-ai-android-project.zip" ]; then
+            unzip -o pocket-ai-android-project.zip -d work/
+          else
+            echo "ERROR: No project zip found in repository root."
+            ls -la
+            exit 1
           fi
+          if [ -d "work/PocketAI/PocketAI" ]; then
+            mv work/PocketAI/PocketAI/* work/PocketAI/ || true
+          fi
+          ls -la work/PocketAI
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -35,11 +48,14 @@ jobs:
             ndk;26.1.10909125
             cmake;3.22.1
 
-      - name: Run unit tests & build Debug APK
-        run: gradle testDebugUnitTest assembleDebug --no-daemon
+      - name: Build Debug APK
+        working-directory: work/PocketAI
+        run: |
+          set -e
+          gradle testDebugUnitTest assembleDebug --no-daemon
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: PocketAI-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: work/PocketAI/app/build/outputs/apk/debug/*.apk
