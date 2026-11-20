@@ -57,6 +57,8 @@ jobs:
 
       - name: Build debug APK
         working-directory: ${{ env.PROJ }}
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           set -o pipefail
           gradle assembleDebug --stacktrace --no-daemon --console=plain 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
