@@ -4,78 +4,149 @@ name: Pocket AI Android Build
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
   pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: pocket-ai-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Build Pocket AI APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout
+      # 1. Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Extract Pocket AI
+      # 2. Extract ZIP
+      - name: Extract Pocket AI Project
         run: |
+          set -e
           mkdir -p project
           unzip -o pocket-ai-android-project.zip -d project
+
+          echo "Project extracted:"
           ls -la project
 
-      - name: Verify Files
+      # 3. Verify project
+      - name: Verify Project Structure
         run: |
+          set -e
           test -f project/settings.gradle.kts
           test -f project/build.gradle.kts
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/cpp/CMakeLists.txt
-          test -f project/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Setup Java
+          echo "Project structure OK"
+
+      # 4. Enable AndroidX
+      - name: Configure Gradle Properties
+        run: |
+          cat > project/gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          kotlin.code.style=official
+          EOF
+
+      # 5. Java 17
+      - name: Setup JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
+      # 6. Gradle 8.7
+      - name: Setup Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: Configure Android SDK
+      # 7. Android SDK
+      - name: Setup Android SDK
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+          set -e
+
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+          sdkmanager --install \
+            "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
             "cmake;3.22.1" \
             "ndk;27.2.12479018"
 
-      - name: Run Tests
-        working-directory: project
-        run: gradle testDebugUnitTest --stacktrace
+          yes | sdkmanager --licenses || true
 
+      # 8. Environment verification
+      - name: Verify Build Environment
+        run: |
+          java -version
+          gradle --version
+          sdkmanager --list_installed
+
+      # 9. Unit tests
+      - name: Run Unit Tests
+        working-directory: project
+        run: |
+          gradle testDebugUnitTest \
+            --no-daemon \
+            --stacktrace
+
+      # 10. Debug APK
       - name: Build Debug APK
         working-directory: project
-        run: gradle assembleDebug --stacktrace
+        run: |
+          gradle assembleDebug \
+            --no-daemon \
+            --stacktrace
 
+      # 11. Release APK
       - name: Build Release APK
         working-directory: project
-        run: gradle assembleRelease --stacktrace
+        run: |
+          gradle assembleRelease \
+            --no-daemon \
+            --stacktrace
 
+      # 12. Verify APK
+      - name: Verify APK Files
+        run: |
+          set -e
+
+          test -f project/app/build/outputs/apk/debug/app-debug.apk
+          test -f project/app/build/outputs/apk/release/app-release-unsigned.apk
+
+          echo "APK BUILD SUCCESSFUL"
+          ls -lh project/app/build/outputs/apk/debug/
+          ls -lh project/app/build/outputs/apk/release/
+
+      # 13. Upload Debug APK
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: Pocket-AI-Debug
           path: project/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          retention-days: 14
 
+      # 14. Upload Release APK
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: Pocket-AI-Release
           path: project/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+          retention-days: 14
