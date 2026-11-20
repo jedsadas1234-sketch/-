@@ -1,19 +1,16 @@
 
-name: Pocket AI Android Build
+name: build-apk
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
-  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: pocket-ai-${{ github.workflow }}-${{ github.ref }}
+  group: pocket-ai-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,38 +18,37 @@ jobs:
     name: Build Pocket AI APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      PROJ: work
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify and Extract Project ZIP
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Extract project
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p work
           ZIP="pocket-ai-android-project.zip"
+          test -f "$ZIP"
+          unzip -o "$ZIP" -d work
 
-          test -f "$ZIP" || {
-            echo "::error::Missing $ZIP"
-            ls -lah
-            exit 1
-          }
+          test -f work/settings.gradle.kts
+          test -f work/build.gradle.kts
+          test -f work/app/build.gradle.kts
+          test -f work/app/src/main/AndroidManifest.xml
+          test -f work/app/src/main/cpp/CMakeLists.txt
 
-          rm -rf project
-          mkdir -p project
-          unzip -o "$ZIP" -d project
-
-          test -f project/settings.gradle.kts
-          test -f project/build.gradle.kts
-          test -f project/app/build.gradle.kts
-          test -f project/app/src/main/AndroidManifest.xml
-          test -f project/app/src/main/cpp/CMakeLists.txt
-
-          echo "Project structure verified."
-
-      - name: Configure Gradle Properties
+      - name: Configure Gradle
         run: |
-          cat > project/gradle.properties <<'EOF'
+          cat > work/gradle.properties <<'EOF'
           android.useAndroidX=true
           android.nonTransitiveRClass=true
           org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
@@ -61,152 +57,103 @@ jobs:
           kotlin.code.style=official
           EOF
 
-      - name: Setup JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
+          find work -exec touch -c {} +
+          rm -rf work/app/.cxx work/app/build
 
-      - name: Setup Gradle 8.7
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Locate or Install Android Command-line Tools
+      - name: Install SDK packages
         shell: bash
         run: |
           set -euo pipefail
+          SDKMANAGER="$(command -v sdkmanager)"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
 
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          mkdir -p "$SDK_ROOT/cmdline-tools"
-
-          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
-
-          if [ -z "$SDKMANAGER" ]; then
-            echo "Installing Android command-line tools."
-
-            TMP_DIR="$(mktemp -d)"
-            curl -fsSL \
-              "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
-              -o "$TMP_DIR/cmdline-tools.zip"
-
-            mkdir -p "$TMP_DIR/unpacked"
-            unzip -q "$TMP_DIR/cmdline-tools.zip" -d "$TMP_DIR/unpacked"
-
-            rm -rf "$SDK_ROOT/cmdline-tools/latest"
-            mkdir -p "$SDK_ROOT/cmdline-tools/latest"
-
-            cp -a "$TMP_DIR/unpacked/cmdline-tools/." \
-              "$SDK_ROOT/cmdline-tools/latest/"
-
-            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          fi
-
-          test -x "$SDKMANAGER"
-
-          SDK_BIN="$(dirname "$SDKMANAGER")"
-
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "$SDK_BIN" >> "$GITHUB_PATH"
-          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-
-          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
-
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install \
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
             "cmake;3.22.1" \
-            "ndk;27.2.12479018"
+            "ndk;26.3.11579264"
 
-          echo "Android SDK installed."
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --list_installed
-
-      - name: Verify Build Environment
-        shell: bash
+      - name: Verify environment
         run: |
-          set -euo pipefail
-
           java -version
-          gradle --version
-
           test -d "$ANDROID_HOME/platforms/android-34"
-          test -d "$ANDROID_HOME/build-tools/34.0.0"
-          test -d "$ANDROID_HOME/ndk/27.2.12479018"
-          test -x "$ANDROID_HOME/cmake/3.22.1/bin/cmake"
+          test -d "$ANDROID_HOME/ndk/26.3.11579264"
+          test -d "$ANDROID_HOME/cmake/3.22.1"
 
-          echo "Build environment verified."
-
-      - name: Run Unit Tests
-        working-directory: project
-        shell: bash
+      - name: Prepare llama.cpp
         run: |
-          set -o pipefail
-          gradle testDebugUnitTest \
-            --no-daemon --stacktrace --console=plain \
-            2>&1 | tee "$GITHUB_WORKSPACE/unit-tests.log"
-
-      - name: Build Debug APK
-        working-directory: project
-        shell: bash
-        run: |
-          set -o pipefail
-          gradle assembleDebug \
-            --no-daemon --stacktrace --console=plain \
-            2>&1 | tee "$GITHUB_WORKSPACE/debug-build.log"
-
-      - name: Build Release APK
-        working-directory: project
-        shell: bash
-        run: |
-          set -o pipefail
-          gradle assembleRelease \
-            --no-daemon --stacktrace --console=plain \
-            2>&1 | tee "$GITHUB_WORKSPACE/release-build.log"
-
-      - name: Verify APK Outputs
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DEBUG_APK="project/app/build/outputs/apk/debug/app-debug.apk"
-          RELEASE_DIR="project/app/build/outputs/apk/release"
-
-          test -s "$DEBUG_APK"
-
-          echo "Debug APK:"
-          ls -lh "$DEBUG_APK"
-
-          if [ -d "$RELEASE_DIR" ]; then
-            find "$RELEASE_DIR" -maxdepth 1 \
-              -type f -name '*.apk' -size +0c -print
+          DIR="work/app/src/main/cpp/llama.cpp"
+          if [ ! -f "$DIR/CMakeLists.txt" ]; then
+            mkdir -p "$(dirname "$DIR")"
+            git clone --depth 1 --branch v1.0.0 \
+              https://github.com/ggml-org/llama.cpp.git "$DIR"
           fi
 
-      - name: Upload Debug APK
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Run tests
+        working-directory: work
+        run: |
+          set -o pipefail
+          gradle testDebugUnitTest --no-daemon --stacktrace --console=plain 2>&1 | tee "$GITHUB_WORKSPACE/test.log"
+
+      - name: Build APK
+        working-directory: work
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Verify APK
+        run: |
+          set -e
+          APK="work/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          ls -lh "$APK"
+          sha256sum "$APK"
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Pocket-AI-Debug
-          path: project/app/build/outputs/apk/debug/*.apk
+          name: PocketAI-debug-apk
+          path: work/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
+      - name: Publish Release
+        if: success()
+        uses: softprops/action-gh-release@v2
         with:
-          name: Pocket-AI-Release
-          path: project/app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
-          retention-days: 14
+          tag_name: build-${{ github.run_number }}
+          name: Pocket AI Build ${{ github.run_number }}
+          files: work/app/build/outputs/apk/debug/app-debug.apk
+          fail_on_unmatched_files: true
 
-      - name: Upload Build Logs
+      - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Pocket-AI-Build-Logs
+          name: PocketAI-build-logs
           path: |
-            unit-tests.log
-            debug-build.log
-            release-build.log
-          if-no-files-found: ignore
+            build.log
+            test.log
+          if-no-files-found: warn
           retention-days: 7
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          {
+            echo '## Build failed'
+            echo '```text'
+            grep -n -E -B3 -A8 \
+              'What went wrong|CMake Error|error:|fatal:|FAILED|^e: ' \
+              build.log test.log 2>/dev/null | tail -160 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
